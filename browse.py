@@ -32,8 +32,8 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
             # QUADRATIC RADIUS: Radius stays small near image, grows fast far away
             # We use an asymmetric box: Wide horizontally, short vertically
             base_r = (norm_dist**2) * (scaled_w * 0.5)
-            r_horiz = int(base_r)
-            r_vert = int(base_r * 0.25)  # 1:4 aspect ratio to preserve horizontal lines
+            r_horiz = int((norm_dist) * (scaled_w * 0.5))
+            r_vert = int(1 + base_r * 0.25)  # 1:4 aspect ratio to preserve horizontal lines
 
             edge_x = 0 if is_left else (scaled_w - 1)
 
