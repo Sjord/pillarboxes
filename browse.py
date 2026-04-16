@@ -4,46 +4,48 @@ import numpy as np
 
 
 def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
-    h_target, w_target = target_height, target_width
+    source_height, source_width, _channels = image_4x3.shape
 
-    # 1. Scale and Center
-    scaled_w = int(h_target * (4 / 3))
+    if source_height == target_height and source_width == target_width:
+        return image_4x3
+
+    # Scale
+    # TODO: do better job of determining scaled width and height
+    scaled_width = int(target_height / source_height * source_width)
     resized_img = cv2.resize(
-        image_4x3, (scaled_w, h_target), interpolation=cv2.INTER_AREA
+        image_4x3, (scaled_width, target_height), interpolation=cv2.INTER_AREA
     )
 
-    # 2. Convert to LAB for better color blending
-    # (LAB prevents "muddy" transitions in the blur)
+    # Convert to LAB for better color blending
     img_lab = cv2.cvtColor(resized_img, cv2.COLOR_BGR2Lab).astype(np.float64)
 
-    canvas_lab = np.zeros((h_target, w_target, 3), dtype=np.float64)
-    pad_x = (w_target - scaled_w) // 2
-    canvas_lab[:, pad_x : pad_x + scaled_w] = img_lab
+    # Center in canvas
+    canvas_lab = np.zeros((target_height, target_width, 3), dtype=np.float64)
+    pad_x = (target_width - scaled_width) // 2
+    canvas_lab[:, pad_x : pad_x + scaled_width] = img_lab
 
-    # 3. Integral Image of LAB data
+    # Integral Image of LAB data
     integral = cv2.integral(img_lab)
 
     def fill_side(indices, is_left):
         for x in indices:
             # Normalized distance (0 to 1) across the pillarbox
-            dist_px = (pad_x - 1 - x) if is_left else (x - (pad_x + scaled_w))
+            dist_px = (pad_x - 1 - x) if is_left else (x - (pad_x + scaled_width))
             norm_dist = dist_px / pad_x
 
-            # QUADRATIC RADIUS: Radius stays small near image, grows fast far away
-            # We use an asymmetric box: Wide horizontally, short vertically
-            base_r = (norm_dist**2) * (scaled_w * 0.5)
-            r_horiz = int((norm_dist) * (scaled_w * 0.5))
-            r_vert = int(1 + base_r * 0.25)  # 1:4 aspect ratio to preserve horizontal lines
+            # Determine size of blur box
+            r_horiz = int(norm_dist * scaled_width * 0.5)
+            r_vert = int(1 + norm_dist**2 * scaled_width * 0.5 * 0.25)
 
-            edge_x = 0 if is_left else (scaled_w - 1)
+            edge_x = 0 if is_left else (scaled_width - 1)
 
             # Sampling boundaries
-            x1 = np.clip(edge_x - r_horiz, 0, scaled_w - 1)
-            x2 = np.clip(edge_x + r_horiz, 0, scaled_w - 1)
+            x1 = np.clip(edge_x - r_horiz, 0, scaled_width - 1)
+            x2 = np.clip(edge_x + r_horiz, 0, scaled_width - 1)
 
-            y_coords = np.arange(h_target)
-            y1 = np.clip(y_coords - r_vert, 0, h_target - 1)
-            y2 = np.clip(y_coords + r_vert, 0, h_target - 1)
+            y_coords = np.arange(target_height)
+            y1 = np.clip(y_coords - r_vert, 0, target_height - 1)
+            y2 = np.clip(y_coords + r_vert, 0, target_height - 1)
 
             # Summed Area Table lookup
             A = integral[y1, x1]
@@ -55,24 +57,11 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
             canvas_lab[:, x] = (D - B - C + A) / counts
 
     fill_side(np.arange(pad_x), True)
-    fill_side(np.arange(pad_x + scaled_w, w_target), False)
+    fill_side(np.arange(pad_x + scaled_width, target_width), False)
 
-    # 4. Convert back to BGR
+    # Convert back to BGR
     result_bgr = cv2.cvtColor(canvas_lab.astype(np.uint8), cv2.COLOR_Lab2BGR)
     return result_bgr
-
-
-def crop_to_4x3(image):
-    h, w = image.shape[:2]
-    target_ratio = 4 / 3
-    if w / h > target_ratio:
-        new_w = int(h * target_ratio)
-        offset = (w - new_w) // 2
-        return image[:, offset : offset + new_w]
-    else:
-        new_h = int(w / target_ratio)
-        offset = (h - new_h) // 2
-        return image[offset : offset + new_h, :]
 
 
 def main():
@@ -92,8 +81,7 @@ def main():
         if img is None:
             continue
 
-        cropped = crop_to_4x3(img)
-        result = create_pillarbox(cropped, 1920, 1080)
+        result = create_pillarbox(img, 1920, 1080)
 
         cv2.imshow("Dynamic Pillarbox", result)
         if cv2.waitKey(0) & 0xFF == ord("q"):
