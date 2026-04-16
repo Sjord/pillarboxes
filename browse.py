@@ -10,8 +10,9 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
         return image_4x3
 
     # Scale
-    # TODO: do better job of determining scaled width and height
+    # TODO: do better job of determining scaled width and height, and correctly fill scaled_height
     scaled_width = int(target_height / source_height * source_width)
+    scaled_height = target_height
     resized_img = cv2.resize(
         image_4x3, (scaled_width, target_height), interpolation=cv2.INTER_AREA
     )
@@ -34,12 +35,11 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
             norm_dist = dist_px / pad_x
 
             # Determine size of blur box
-            r_horiz = int(norm_dist * scaled_width * 0.5)
-            r_vert = int(1 + norm_dist**2 * scaled_width * 0.5 * 0.25)
-
-            edge_x = 0 if is_left else (scaled_width - 1)
+            r_horiz = int(norm_dist * scaled_width * 0.25)
+            r_vert = int(1 + norm_dist ** 2 * scaled_height * 0.25)
 
             # Sampling boundaries
+            edge_x = 0 if is_left else (scaled_width - 1)
             x1 = np.clip(edge_x - r_horiz, 0, scaled_width - 1)
             x2 = np.clip(edge_x + r_horiz, 0, scaled_width - 1)
 
