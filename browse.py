@@ -3,6 +3,29 @@ import cv2
 import numpy as np
 
 
+def resize(image, target_width=1920, target_height=1080):
+    source_height, source_width = image.shape[:2]
+
+    if source_height == target_height and source_width == target_width:
+        return image
+
+    # 1. Calculate the scaling ratio for both dimensions
+    # We want the ratio that fits the image entirely within the target box
+    ratio_w = target_width / source_width
+    ratio_h = target_height / source_height
+    scale = min(ratio_w, ratio_h)
+
+    # 2. Determine new dimensions based on the aspect ratio scale
+    scaled_width = int(source_width * scale)
+    scaled_height = int(source_height * scale)
+
+    # 3. Resize the image
+    # Use INTER_AREA for shrinking (better quality) and INTER_CUBIC for enlarging
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    resized_img = cv2.resize(image, (scaled_width, scaled_height), interpolation=interp)
+    return resized_img
+
+
 def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
     source_height, source_width, _channels = image_4x3.shape
 
@@ -10,12 +33,8 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
         return image_4x3
 
     # Scale
-    # TODO: do better job of determining scaled width and height, and correctly fill scaled_height
-    scaled_width = int(target_height / source_height * source_width)
-    scaled_height = target_height
-    resized_img = cv2.resize(
-        image_4x3, (scaled_width, target_height), interpolation=cv2.INTER_AREA
-    )
+    resized_img = resize(image_4x3, target_width=1920, target_height=1080)
+    scaled_height, scaled_width = resized_img.shape[:2]
 
     # Convert to LAB for better color blending
     img_lab = cv2.cvtColor(resized_img, cv2.COLOR_BGR2Lab).astype(np.float64)
