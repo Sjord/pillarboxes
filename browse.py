@@ -73,18 +73,20 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
             dist_px = (pad_x - 1 - x) if is_left else (x - (pad_x + scaled_width))
             norm_dist = dist_px / pad_x
 
-            # Base radii
+            # Linear blurs
+            base_rh = norm_dist * scaled_width * 0.25
+            base_rv = 1 + norm_dist * scaled_height * 0.25
+            avg1 = get_box_avg(int(base_rh), int(base_rv))
+            avg4 = get_box_avg(int(base_rh * 1.4), int(base_rv * 1.4))
+
+            # Quadratic blurs
             base_rh = norm_dist * scaled_width * 0.25
             base_rv = 1 + (norm_dist ** 2) * scaled_height * 0.25
-
-            # Calculate 3 boxes with varying sizes (0.6x, 1.0x, 1.4x)
-            # This spread helps simulate a bell-curve weight distribution
-            avg1 = get_box_avg(int(base_rh * 0.6), int(base_rv * 0.6))
             avg2 = get_box_avg(int(base_rh), int(base_rv))
             avg3 = get_box_avg(int(base_rh * 1.4), int(base_rv * 1.4))
 
-            # Blend the three boxes
-            canvas_lab[:, x] = (avg1 + avg2 + avg3) / 3.0
+            # Mix all blurs
+            canvas_lab[:, x] = (avg1 + avg2 + avg3 + avg4) / 4.0
 
     fill_side(np.arange(pad_x), True)
     fill_side(np.arange(pad_x + scaled_width, target_width), False)
