@@ -26,14 +26,23 @@ def resize(image, target_width=1920, target_height=1080):
     return resized_img
 
 
-def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
-    source_height, source_width, _channels = image_4x3.shape
+def create_pillarbox(image, target_width=1920, target_height=1080):
+    source_height, source_width = image.shape[:2]
 
     if source_height == target_height and source_width == target_width:
-        return image_4x3
+        return image
 
-    # Scale
-    resized_img = resize(image_4x3, target_width=1920, target_height=1080)
+    # 1. Determine if we need Letterbox (top/bottom) instead of Pillarbox (left/right)
+    # We compare aspect ratios to see which direction needs padding
+    needs_transpose = (source_width / source_height) > (target_width / target_height)
+
+    if needs_transpose:
+        # Swap target dimensions and transpose input so we always work on vertical pillarboxes
+        image = cv2.transpose(image)
+        target_width, target_height = target_height, target_width
+
+    # 2. Scale image to fit the target height perfectly
+    resized_img = resize(image, target_width=target_width, target_height=target_height)
     scaled_height, scaled_width = resized_img.shape[:2]
 
     # Convert to LAB for better color blending
@@ -44,61 +53,63 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
     pad_x = (target_width - scaled_width) // 2
     canvas_lab[:, pad_x : pad_x + scaled_width] = img_lab
 
-    # Integral Image of LAB data
-    integral = cv2.integral(img_lab)
+    # 3. Define a unified Left-Side Blur Engine
+    def blur_left_side(canvas, source_img):
+        integral = cv2.integral(source_img)
 
-    def fill_side(indices, is_left):
-        def get_box_avg(rh, rv):
-            """Helper to perform the vectorized SAT lookup for a given radius pair."""
-            # Sampling boundaries
-            edge_x = 0 if is_left else (scaled_width - 1)
-            x1 = np.clip(edge_x - rh, 0, scaled_width - 1)
-            x2 = np.clip(edge_x + rh, 0, scaled_width - 1)
-
-            y_coords = np.arange(target_height)
-            y1 = np.clip(y_coords - rv, 0, target_height - 1)
-            y2 = np.clip(y_coords + rv, 0, target_height - 1)
-
-            # SAT lookup (A, B, C, D corners)
-            A = integral[y1, x1]
-            B = integral[y1, x2 + 1]
-            C = integral[y2 + 1, x1]
-            D = integral[y2 + 1, x2 + 1]
-
-            # Area calculation
-            area = (y2 - y1 + 1)[:, None] * (x2 - x1 + 1)
-            return (D - B - C + A) / area
-
-        for x in indices:
-            dist_px = (pad_x - 1 - x) if is_left else (x - (pad_x + scaled_width))
+        # We only ever loop from 0 to pad_x
+        for x in range(pad_x):
+            dist_px = pad_x - 1 - x
             norm_dist = dist_px / pad_x
 
-            sums = np.zeros((target_height, 3))
-            count = 0
-            v_base = 3
-
-            # Linear blurs
             base_rh = norm_dist * scaled_width * 0.25
-            base_rv = v_base + norm_dist * scaled_height * 0.25
-            for m in [1, 1.4]:
-                sums += get_box_avg(int(base_rh * m), int(base_rv * m))
-                count += 1
+            rv_linear = 3 + norm_dist * scaled_height * 0.25
+            rv_quad = 3 + (norm_dist ** 2) * scaled_height * 0.25
 
-            # Quadratic blurs
-            base_rh = norm_dist * scaled_width * 0.25
-            base_rv = v_base + (norm_dist ** 2) * scaled_height * 0.25
-            for m in [1, 1.4]:
-                sums += get_box_avg(int(base_rh * m), int(base_rv * m))
-                count += 1
+            # Sampling bounds (always anchored to edge_x = 0)
+            x1 = 0
+            x2 = np.clip(int(base_rh * 1.4), 0, scaled_width - 1)
 
-            # Mix all blurs
-            canvas_lab[:, x] = sums / float(count)
+            y_coords = np.arange(target_height)
 
-    fill_side(np.arange(pad_x), True)
-    fill_side(np.arange(pad_x + scaled_width, target_width), False)
+            # Helper to quickly query the SAT for a specific vertical radius
+            def get_blur_v(rv):
+                y1 = np.clip(y_coords - int(rv), 0, target_height - 1)
+                y2 = np.clip(y_coords + int(rv), 0, target_height - 1)
 
-    # Convert back to BGR
+                A = integral[y1, x1]
+                B = integral[y1, x2 + 1]
+                C = integral[y2 + 1, x1]
+                D = integral[y2 + 1, x2 + 1]
+
+                area = (y2 - y1 + 1)[:, None] * (x2 - x1 + 1)
+                return (D - B - C + A) / area
+
+            # Average our 4 blur steps cleanly
+            sums = (get_blur_v(rv_linear) +
+                    get_blur_v(rv_linear * 1.4) +
+                    get_blur_v(rv_quad) +
+                    get_blur_v(rv_quad * 1.4))
+
+            canvas[:, x] = sums / 4.0
+
+    # 4. Execute the blurs using flips
+    # Blur the actual left side
+    blur_left_side(canvas_lab, img_lab)
+
+    # Flip canvas and source horizontally, blur the "new" left side (which is the right side), flip back
+    canvas_lab = cv2.flip(canvas_lab, 1)
+    img_lab_flipped = cv2.flip(img_lab, 1)
+    blur_left_side(canvas_lab, img_lab_flipped)
+    canvas_lab = cv2.flip(canvas_lab, 1)
+
+    # 5. Convert back to BGR
     result_bgr = cv2.cvtColor(canvas_lab.astype(np.uint8), cv2.COLOR_Lab2BGR)
+
+    # If we transposed at the beginning, transpose back to restore original orientation
+    if needs_transpose:
+        result_bgr = cv2.transpose(result_bgr)
+
     return result_bgr
 
 
