@@ -3,71 +3,86 @@ from pathlib import Path
 import cv2
 import sys
 from browse import create_pillarbox
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+
+def process_single_image(file_path, target_width, target_height, root_path):
+    """
+    Worker function: Processes a single image file.
+    Returns a status string and the relative path for clean console printing.
+    """
+    rel_path = file_path.relative_to(root_path)
+    try:
+        img = cv2.imread(str(file_path))
+        if img is None:
+            return "SKIPPED_DECODE", rel_path, "Could not decode image data"
+
+        h, w = img.shape[:2]
+        if h == target_height and w == target_width:
+            return "SKIPPED_MATCH", rel_path, "Already target size"
+
+        # Run your pipeline (using the off-by-one fixed function!)
+        processed_img = create_pillarbox(img, target_width, target_height)
+
+        success = cv2.imwrite(str(file_path), processed_img)
+        if success:
+            return "SUCCESS", rel_path, f"({w}x{h} -> {target_width}x{target_height})"
+        else:
+            return "ERROR_WRITE", rel_path, "Failed to write file back to disk"
+
+    except Exception as e:
+        return "FAILED", rel_path, str(e)
 
 
 def batch_process_directory(directory_path, target_width=1920, target_height=1080):
-    """
-    Recursively finds all images in a directory, processes them with 
-    create_pillarbox, and overwrites the original files.
-    """
-    # Supported image extensions (case-insensitive)
     valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
-    
     path = Path(directory_path)
+
     if not path.is_dir():
-        print(f"Error: The path '{directory_path}' is not a valid directory.")
+        print(f"Error: '{directory_path}' is not a valid directory.")
         return
 
     print(f"Scanning '{path.resolve()}' for images...")
-    
-    # Track metrics for the summary
+
+    # 1. Gather all target files first
+    tasks = [f for f in path.rglob("*") if f.is_file() and f.suffix.lower() in valid_extensions]
+    total_images = len(tasks)
+
+    print(f"Found {total_images} images. Starting parallel processing thread pool...\n")
+
     processed_count = 0
     skipped_count = 0
     error_count = 0
 
-    # rglob("*") recursively finds all files and folders
-    for file_path in path.rglob("*"):
-        # Check if it's a file and has an image extension
-        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
-            print(f"Processing: {file_path.relative_to(path)}", end="", flush=True)
-            
-            try:
-                # Read the image
-                # Note: Using str(file_path) for compatibility with OpenCV path handling
-                img = cv2.imread(str(file_path))
-                
-                if img is None:
-                    print(" -> [SKIPPED] (Could not decode image data)")
-                    error_count += 1
-                    continue
-                
-                # Check dimensions to see if it even needs processing
-                h, w = img.shape[:2]
-                if h == target_height and w == target_width:
-                    print(" -> [SKIPPED] (Already target size)")
-                    skipped_count += 1
-                    continue
+    # 2. Maximize performance by using an Executor Pool
+    # By default, max_workers matches your total CPU core count
+    with ProcessPoolExecutor() as executor:
+        # Submit all tasks to the queue
+        futures = {
+            executor.submit(process_single_image, file_path, target_width, target_height, path): file_path
+            for file_path in tasks
+        }
 
-                # Run your blur padding pipeline
-                processed_img = create_pillarbox(img, target_width, target_height)
-                
-                # Overwrite the original file
-                success = cv2.imwrite(str(file_path), processed_img)
-                
-                if success:
-                    print(f" -> [DONE] ({w}x{h} -> {target_width}x{target_height})")
-                    processed_count += 1
+        # 3. As each process finishes, print its result in real-time
+        for future in as_completed(futures):
+            status, rel_file, message = future.result()
+
+            if status == "SUCCESS":
+                print(f"[DONE] {rel_file} -> {message}")
+                processed_count += 1
+            elif "SKIPPED" in status:
+                print(f"[SKIPPED] {rel_file} -> {message}")
+                if status == "SKIPPED_MATCH":
+                    skipped_count += 1
                 else:
-                    print(" -> [ERROR] (Failed to write file back to disk)")
                     error_count += 1
-                    
-            except Exception as e:
-                print(f" -> [FAILED] (Unexpected error: {str(e)})")
+            else:
+                print(f"[FAILED] {rel_file} -> Error: {message}")
                 error_count += 1
 
-    # Print out a little execution summary
+    # Print summary
     print("\n" + "="*40)
-    print("Processing Completed Summary:")
+    print("Parallel Processing Completed Summary:")
     print(f"  Successfully Processed: {processed_count}")
     print(f"  Skipped (Already Match): {skipped_count}")
     print(f"  Errors / Failures:      {error_count}")
