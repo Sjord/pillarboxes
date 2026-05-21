@@ -73,20 +73,25 @@ def create_pillarbox(image_4x3, target_width=1920, target_height=1080):
             dist_px = (pad_x - 1 - x) if is_left else (x - (pad_x + scaled_width))
             norm_dist = dist_px / pad_x
 
+            sums = np.zeros((target_height, 3))
+            count = 0
+
             # Linear blurs
             base_rh = norm_dist * scaled_width * 0.25
             base_rv = 1 + norm_dist * scaled_height * 0.25
-            avg1 = get_box_avg(int(base_rh), int(base_rv))
-            avg4 = get_box_avg(int(base_rh * 1.4), int(base_rv * 1.4))
+            for m in [1, 1.4]:
+                sums += get_box_avg(int(base_rh * m), int(base_rv * m))
+                count += 1
 
             # Quadratic blurs
             base_rh = norm_dist * scaled_width * 0.25
             base_rv = 1 + (norm_dist ** 2) * scaled_height * 0.25
-            avg2 = get_box_avg(int(base_rh), int(base_rv))
-            avg3 = get_box_avg(int(base_rh * 1.4), int(base_rv * 1.4))
+            for m in [1, 1.4]:
+                sums += get_box_avg(int(base_rh * m), int(base_rv * m))
+                count += 1
 
             # Mix all blurs
-            canvas_lab[:, x] = (avg1 + avg2 + avg3 + avg4) / 4.0
+            canvas_lab[:, x] = sums / float(count)
 
     fill_side(np.arange(pad_x), True)
     fill_side(np.arange(pad_x + scaled_width, target_width), False)
