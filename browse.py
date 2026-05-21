@@ -43,6 +43,11 @@ def create_pillarbox(image, target_width=1920, target_height=1080):
 
     # 2. Scale image to fit the target height perfectly
     resized_img = resize(image, target_width=target_width, target_height=target_height)
+
+    # Force the resized image height to match target_height exactly in case of off-by-one rounding
+    if resized_img.shape[0] != target_height:
+        resized_img = cv2.resize(resized_img, (resized_img.shape[1], target_height), interpolation=cv2.INTER_LINEAR)
+
     scaled_height, scaled_width = resized_img.shape[:2]
 
     # Convert to LAB for better color blending
