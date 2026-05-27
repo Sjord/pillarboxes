@@ -96,7 +96,19 @@ def create_pillarbox(image, target_width=1920, target_height=1080):
                     get_blur_v(rv_quad) +
                     get_blur_v(rv_quad * 1.4))
 
-            canvas[:, x] = sums / 4.0
+            mixed_pixel = sums / 4.0
+
+            # Drops brightness by up to 30% at the absolute outer edge
+            vignette_factor = 1.0 - (0.30 * (norm_dist ** 2))
+            mixed_pixel[:, 0] *= vignette_factor
+
+            # Inject random texture/grain into the L (luminance) channel.
+            noise_amplitude = 2.0
+            grain = np.random.normal(0, noise_amplitude, target_height)
+            mixed_pixel[:, 0] = np.clip(mixed_pixel[:, 0] + grain, 0, 255)
+
+            # Assign back to canvas column
+            canvas[:, x] = mixed_pixel
 
     # 4. Execute the blurs using flips
     # Blur the actual left side
